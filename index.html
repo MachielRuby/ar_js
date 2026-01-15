@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>F3D AR Demo</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        #container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 10;
+        }
+        /* Style for the loading message or UI */
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            z-index: 20;
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 5px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">Point camera at Hiro marker</div>
+    <div id="container"></div>
+
+    <!-- Import F3D and setup AR -->
+    <script type="module">
+        import * as F3D from './f3d.es.js';
+
+        // 1. Expose F3D exports as global THREE object for AR.js
+        window.THREE = { ...F3D };
+        
+        // 2. Load AR.js dynamically
+        const script = document.createElement('script');
+        script.src = 'https://raw.githack.com/AR-js-org/AR.js/master/three.js/build/ar-threex.js';
+        script.onload = initAR;
+        document.body.appendChild(script);
+
+        function initAR() {
+            console.log('AR.js loaded');
+
+            // 3. Initialize F3D App
+            const app = new F3D.F3dApp({
+                container: document.getElementById('container'),
+                autoStart: false, // Start manually after setup
+                transparentBackground: true, // Important: make canvas transparent to see video
+                camera: { 
+                    position: { x: 0, y: 0, z: 0 },
+                    // Disable default limits that might interfere
+                    limits: { distance: { min: 0, max: 1000 } } 
+                }
+            });
+
+            // Access underlying engine components
+            const engine = app.engine;
+            const scene = app.scene;
+            const camera = app.camera;
+            const renderer = engine.renderer;
+
+            // 4. Initialize AR.js Source (Webcam)
+            const arToolkitSource = new THREEx.ArToolkitSource({
+                sourceType: 'webcam',
+            });
+
+            arToolkitSource.init(function onReady(){
+                onResize();
+            });
+
+            // Handle resize
+            window.addEventListener('resize', function(){
+                onResize();
+            });
+
+            function onResize(){
+                arToolkitSource.onResizeElement();
+                arToolkitSource.copyElementSizeTo(renderer.domElement);
+                if(arToolkitContext.arController !== null){
+                    arToolkitSource.copyElementSizeTo(arToolkitContext.arController.canvas);
+                }
+            }
+
+            // 5. Initialize AR.js Context (Marker Detection)
+            const arToolkitContext = new THREEx.ArToolkitContext({
+                cameraParametersUrl: 'https://raw.githack.com/AR-js-org/AR.js/master/data/data/camera_para.dat',
+                detectionMode: 'mono',
+            });
+
+            arToolkitContext.init(function onCompleted(){
+                // Copy projection matrix to camera
+                camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
+            });
+
+            // 6. Create Marker Root
+            // F3D/Three group that will track the marker
+            const markerRoot = new F3D.Group(); 
+            markerRoot.name = "markerRoot";
+            scene.add(markerRoot);
+
+            // 7. Initialize Marker Controls
+            const arMarkerControls = new THREEx.ArMarkerControls(arToolkitContext, markerRoot, {
+                type: 'pattern',
+                patternUrl: 'https://raw.githack.com/AR-js-org/AR.js/master/data/data/patt.hiro',
+            });
+
+            // 8. Add a 3D Model to the Marker Root
+            // Adding a simple box for demonstration
+            const geometry = new F3D.BoxGeometry(1, 1, 1);
+            const material = new F3D.MeshNormalMaterial({
+                transparent: true,
+                opacity: 0.8,
+                side: F3D.DoubleSide
+            });
+            const mesh = new F3D.Mesh(geometry, material);
+            mesh.position.y = 0.5; // Sit on top of the marker
+            markerRoot.add(mesh);
+
+            // Also add a light if needed (F3D might have default lights, but marker root needs to be lit if using standard material)
+            // MeshNormalMaterial doesn't need light.
+            
+            // 9. Hook into F3D render loop
+            engine.addUpdateCallback('ar_update', (deltaTime) => {
+                if(arToolkitSource.ready !== false){
+                    arToolkitContext.update(arToolkitSource.domElement);
+                }
+                
+                // Optional: Rotate the mesh
+                mesh.rotation.y += deltaTime * 1.0;
+            });
+
+            // 10. Start the engine
+            app.start();
+
+            // Disable F3D's default camera controls to let AR.js handle camera/marker relationship
+            if (engine.editController) {
+                // Disable controls
+                engine.editController.enabled = false; 
+                // Remove event listeners if possible, or just rely on enabled=false
+            }
+        }
+    </script>
+</body>
+</html>
