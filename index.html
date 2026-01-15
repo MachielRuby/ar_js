@@ -33,7 +33,14 @@
     </style>
 </head>
 <body>
-    <div id="ui">Point camera at Hiro marker</div>
+    <div id="ui">
+        <div>请将摄像头对准 Hiro 或 Kanji 标识物</div>
+        <div style="margin: 5px 0;">
+            <a href="https://raw.githubusercontent.com/AR-js-org/AR.js/master/data/images/hiro.png" target="_blank" style="color: lightblue; margin-right: 10px;">打开 Hiro 图片</a>
+            <a href="https://raw.githubusercontent.com/AR-js-org/AR.js/master/data/images/kanji.png" target="_blank" style="color: lightblue;">打开 Kanji 图片</a>
+        </div>
+        <label><input type="checkbox" id="persistToggle"> 丢失标识物后保持模型 (Scan Once Mode)</label>
+    </div>
     <div id="container"></div>
 
     <!-- Import F3D and setup AR -->
@@ -42,6 +49,9 @@
 
         // 1. Expose F3D exports as global THREE object for AR.js
         window.THREE = { ...F3D };
+        if (!window.THREE.Math) {
+            window.THREE.Math = window.THREE.MathUtils;
+        }
         
         // 2. Load AR.js dynamically
         const script = document.createElement('script');
@@ -49,28 +59,41 @@
         script.onload = initAR;
         document.body.appendChild(script);
 
-        function initAR() {
+        async function initAR() {
             console.log('AR.js loaded');
+
+            // Load Configuration from "Database" (JSON file)
+            let arData = [];
+            try {
+                const response = await fetch('./models.json');
+                arData = await response.json();
+            } catch (e) {
+                console.error("Failed to load models.json", e);
+                // Fallback data
+                arData = [{
+                    markerUrl: 'https://raw.githack.com/AR-js-org/AR.js/master/data/data/patt.hiro',
+                    type: 'box',
+                    color: 'green'
+                }];
+            }
 
             // 3. Initialize F3D App
             const app = new F3D.F3dApp({
                 container: document.getElementById('container'),
-                autoStart: false, // Start manually after setup
-                transparentBackground: true, // Important: make canvas transparent to see video
+                autoStart: false, 
+                transparentBackground: true,
                 camera: { 
                     position: { x: 0, y: 0, z: 0 },
-                    // Disable default limits that might interfere
                     limits: { distance: { min: 0, max: 1000 } } 
                 }
             });
 
-            // Access underlying engine components
             const engine = app.engine;
             const scene = app.scene;
             const camera = app.camera;
             const renderer = engine.renderer;
 
-            // 4. Initialize AR.js Source (Webcam)
+            // 4. Initialize AR.js Source
             const arToolkitSource = new THREEx.ArToolkitSource({
                 sourceType: 'webcam',
             });
@@ -79,7 +102,6 @@
                 onResize();
             });
 
-            // Handle resize
             window.addEventListener('resize', function(){
                 onResize();
             });
@@ -92,62 +114,103 @@
                 }
             }
 
-            // 5. Initialize AR.js Context (Marker Detection)
+            // 5. Initialize AR.js Context
             const arToolkitContext = new THREEx.ArToolkitContext({
                 cameraParametersUrl: 'https://raw.githack.com/AR-js-org/AR.js/master/data/data/camera_para.dat',
                 detectionMode: 'mono',
+                maxDetectionRate: 60, // 提高检测频率
+                canvasWidth: 80 * 3, // 提高内部处理分辨率
+                canvasHeight: 60 * 3,
             });
 
             arToolkitContext.init(function onCompleted(){
-                // Copy projection matrix to camera
                 camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
             });
 
-            // 6. Create Marker Root
-            // F3D/Three group that will track the marker
-            const markerRoot = new F3D.Group(); 
-            markerRoot.name = "markerRoot";
-            scene.add(markerRoot);
+            // 6. Create Markers dynamically from Data
+            const markerControlsList = [];
+            const persistCheckbox = document.getElementById('persistToggle');
 
-            // 7. Initialize Marker Controls
-            const arMarkerControls = new THREEx.ArMarkerControls(arToolkitContext, markerRoot, {
-                type: 'pattern',
-                patternUrl: 'https://raw.githack.com/AR-js-org/AR.js/master/data/data/patt.hiro',
+            arData.forEach(item => {
+                const markerRoot = new F3D.Group();
+                markerRoot.name = `markerRoot_${item.id}`;
+                markerRoot.visible = false; 
+                scene.add(markerRoot);
+
+                // Create AR Marker Control
+                const controls = new THREEx.ArMarkerControls(arToolkitContext, markerRoot, {
+                    type: 'pattern',
+                    patternUrl: item.markerUrl,
+                    smooth: true,               // 开启平滑
+                    smoothCount: 5,             // 平滑帧数，越高越稳但延迟越大
+                    smoothTolerance: 0.01,      // 移动阈值
+                    smoothThreshold: 2          // 速度阈值
+                });
+                
+                // Custom flag to track if we found it at least once
+                controls.hasBeenFound = false;
+                markerControlsList.push({
+                    controls: controls,
+                    root: markerRoot
+                });
+
+                // Add Model based on type
+                let mesh;
+                if (item.type === 'box') {
+                    const geometry = new F3D.BoxGeometry(1, 1, 1);
+                    const material = new F3D.MeshNormalMaterial({ transparent: true, opacity: 0.8 });
+                    if (item.color) material.color = new F3D.Color(item.color);
+                    mesh = new F3D.Mesh(geometry, material);
+                } else if (item.type === 'sphere') {
+                    const geometry = new F3D.SphereGeometry(0.5, 32, 32);
+                    const material = new F3D.MeshNormalMaterial({ wireframe: true });
+                    mesh = new F3D.Mesh(geometry, material);
+                }
+                
+                if (mesh) {
+                    mesh.position.y = 0.5;
+                    if (item.scale) mesh.scale.set(item.scale[0], item.scale[1], item.scale[2]);
+                    markerRoot.add(mesh);
+                    
+                    // Simple animation
+                    engine.addUpdateCallback(`anim_${item.id}`, (dt) => {
+                        mesh.rotation.y += dt;
+                        mesh.rotation.x += dt * 0.5;
+                    });
+                }
             });
 
-            // 8. Add a 3D Model to the Marker Root
-            // Adding a simple box for demonstration
-            const geometry = new F3D.BoxGeometry(1, 1, 1);
-            const material = new F3D.MeshNormalMaterial({
-                transparent: true,
-                opacity: 0.8,
-                side: F3D.DoubleSide
-            });
-            const mesh = new F3D.Mesh(geometry, material);
-            mesh.position.y = 0.5; // Sit on top of the marker
-            markerRoot.add(mesh);
-
-            // Also add a light if needed (F3D might have default lights, but marker root needs to be lit if using standard material)
-            // MeshNormalMaterial doesn't need light.
-            
-            // 9. Hook into F3D render loop
+            // 9. Update Loop with Custom Persistence Logic
             engine.addUpdateCallback('ar_update', (deltaTime) => {
                 if(arToolkitSource.ready !== false){
                     arToolkitContext.update(arToolkitSource.domElement);
                 }
                 
-                // Optional: Rotate the mesh
-                mesh.rotation.y += deltaTime * 1.0;
+                // Handle Visibility Logic
+                markerControlsList.forEach(item => {
+                    const { controls, root } = item;
+                    
+                    // AR.js automatically sets root.visible = true/false inside update()
+                    // But we want to override this if "Persistence" is on.
+                    
+                    const isVisible = root.visible;
+                    
+                    if (isVisible) {
+                        controls.hasBeenFound = true;
+                    }
+
+                    if (persistCheckbox.checked && controls.hasBeenFound) {
+                        // If persist is on, and we found it once, keep it visible
+                        // Note: It will stay at the last known position relative to camera
+                        root.visible = true;
+                    }
+                });
             });
 
-            // 10. Start the engine
             app.start();
 
-            // Disable F3D's default camera controls to let AR.js handle camera/marker relationship
             if (engine.editController) {
-                // Disable controls
                 engine.editController.enabled = false; 
-                // Remove event listeners if possible, or just rely on enabled=false
             }
         }
     </script>
