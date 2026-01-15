@@ -118,8 +118,9 @@
             const arToolkitContext = new THREEx.ArToolkitContext({
                 cameraParametersUrl: 'https://raw.githack.com/AR-js-org/AR.js/master/data/data/camera_para.dat',
                 detectionMode: 'mono',
-                maxDetectionRate: 60, // 提高检测频率
-                canvasWidth: 80 * 3, // 提高内部处理分辨率
+                // 回调参数以提高稳定性，降低误识别率
+                maxDetectionRate: 30, 
+                canvasWidth: 80 * 3,
                 canvasHeight: 60 * 3,
             });
 
@@ -141,14 +142,17 @@
                 const controls = new THREEx.ArMarkerControls(arToolkitContext, markerRoot, {
                     type: 'pattern',
                     patternUrl: item.markerUrl,
-                    smooth: true,               // 开启平滑
-                    smoothCount: 5,             // 平滑帧数，越高越稳但延迟越大
-                    smoothTolerance: 0.01,      // 移动阈值
-                    smoothThreshold: 2          // 速度阈值
+                    smooth: true,
+                    smoothCount: 10,       // 增加平滑缓冲
+                    smoothTolerance: 0.01,
+                    smoothThreshold: 2
                 });
                 
-                // Custom flag to track if we found it at least once
-                controls.hasBeenFound = false;
+                // Custom state for stability
+                controls.foundCounter = 0;
+                controls.lostCounter = 0;
+                controls.isStableFound = false; // 稳定的识别状态
+
                 markerControlsList.push({
                     controls: controls,
                     root: markerRoot
@@ -172,15 +176,20 @@
                     if (item.scale) mesh.scale.set(item.scale[0], item.scale[1], item.scale[2]);
                     markerRoot.add(mesh);
                     
-                    // Simple animation
                     engine.addUpdateCallback(`anim_${item.id}`, (dt) => {
-                        mesh.rotation.y += dt;
-                        mesh.rotation.x += dt * 0.5;
+                        // 只有在显示的时候才旋转，节省性能
+                        if (markerRoot.visible) {
+                            mesh.rotation.y += dt;
+                            mesh.rotation.x += dt * 0.5;
+                        }
                     });
                 }
             });
 
-            // 9. Update Loop with Custom Persistence Logic
+            // 9. Update Loop with Anti-Flicker & Persistence Logic
+            const STABLE_THRESHOLD = 5; // 连续识别 N 帧才显示
+            const LOST_THRESHOLD = 10;  // 连续丢失 N 帧才隐藏
+
             engine.addUpdateCallback('ar_update', (deltaTime) => {
                 if(arToolkitSource.ready !== false){
                     arToolkitContext.update(arToolkitSource.domElement);
@@ -190,19 +199,46 @@
                 markerControlsList.forEach(item => {
                     const { controls, root } = item;
                     
-                    // AR.js automatically sets root.visible = true/false inside update()
-                    // But we want to override this if "Persistence" is on.
+                    // AR.js 当前帧的检测结果
+                    const isRawVisible = root.visible;
                     
-                    const isVisible = root.visible;
-                    
-                    if (isVisible) {
-                        controls.hasBeenFound = true;
+                    if (isRawVisible) {
+                        controls.foundCounter++;
+                        controls.lostCounter = 0;
+                    } else {
+                        controls.lostCounter++;
+                        controls.foundCounter = 0;
                     }
 
-                    if (persistCheckbox.checked && controls.hasBeenFound) {
-                        // If persist is on, and we found it once, keep it visible
-                        // Note: It will stay at the last known position relative to camera
-                        root.visible = true;
+                    // 状态机转换
+                    if (controls.foundCounter >= STABLE_THRESHOLD) {
+                        controls.isStableFound = true;
+                    } else if (controls.lostCounter >= LOST_THRESHOLD) {
+                        controls.isStableFound = false;
+                    }
+
+                    // 最终可见性决策
+                    if (persistCheckbox.checked) {
+                        // 如果开启了保持模式：
+                        // 只要曾经稳定识别过 (isStableFound 曾经为 true，或者当前为 true)
+                        // 这里简化逻辑：如果当前是稳定状态，显示；
+                        // 如果当前不是稳定状态（即丢失了），但之前找到过，也显示。
+                        // 实际上，只要 persist 开启，我们就不让它变回 false，除非用户重置。
+                        
+                        // 我们需要一个标记来记录是否“曾经”稳定识别过，这个在 controls 对象上没有，我们加一个
+                        if (controls.isStableFound) {
+                            controls.hasEverBeenStable = true;
+                        }
+
+                        if (controls.hasEverBeenStable) {
+                             root.visible = true;
+                        } else {
+                             root.visible = controls.isStableFound;
+                        }
+                        
+                    } else {
+                        // 默认模式：只在稳定识别时显示
+                        root.visible = controls.isStableFound;
                     }
                 });
             });
