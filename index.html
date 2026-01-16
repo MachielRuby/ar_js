@@ -134,16 +134,31 @@
             });
 
             // 8. Add a 3D Model to the Marker Root
-            // Adding a simple box for demonstration
-            const geometry = new F3D.BoxGeometry(1, 1, 1);
-            const material = new F3D.MeshNormalMaterial({
-                transparent: true,
-                opacity: 0.8,
-                side: F3D.DoubleSide
-            });
-            const mesh = new F3D.Mesh(geometry, material);
-            mesh.position.y = 0.5; // Sit on top of the marker
-            markerRoot.add(mesh);
+            // Load the Damaged Helmet model
+            let model = null;
+            const loader = new F3D.GLTFLoader();
+            loader.load(
+                'https://raw.githack.com/KhronosGroup/glTF-Sample-Models/master/2.0/DamagedHelmet/glTF/DamagedHelmet.gltf',
+                function (gltf) {
+                    model = gltf.scene;
+                    // Adjust scale if necessary (the helmet is roughly 2 units wide)
+                    model.scale.set(0.5, 0.5, 0.5);
+                    model.position.y = 0.5; // Sit on top of the marker
+                    markerRoot.add(model);
+                    console.log("Model loaded");
+                },
+                undefined,
+                function (error) {
+                    console.error('An error happened', error);
+                }
+            );
+
+            // Add lights to the scene (since GLTF models use PBR materials)
+            const ambientLight = new F3D.AmbientLight(0xffffff, 1.0);
+            scene.add(ambientLight);
+            const directionalLight = new F3D.DirectionalLight(0xffffff, 2.0);
+            directionalLight.position.set(1, 1, 1);
+            scene.add(directionalLight);
 
             // Button controls for scaling
             const btnScaleUp = document.getElementById('btn-scale-up');
@@ -151,13 +166,17 @@
             
             if (btnScaleUp && btnScaleDown) {
                 btnScaleUp.addEventListener('click', () => {
-                    mesh.scale.multiplyScalar(1.1);
-                    console.log('Model scaled up:', mesh.scale);
+                    if (model) {
+                        model.scale.multiplyScalar(1.1);
+                        console.log('Model scaled up:', model.scale);
+                    }
                 });
 
                 btnScaleDown.addEventListener('click', () => {
-                    mesh.scale.multiplyScalar(0.9);
-                    console.log('Model scaled down:', mesh.scale);
+                    if (model) {
+                        model.scale.multiplyScalar(0.9);
+                        console.log('Model scaled down:', model.scale);
+                    }
                 });
             }
 
@@ -169,9 +188,6 @@
                 if(arToolkitSource.ready !== false){
                     arToolkitContext.update(arToolkitSource.domElement);
                 }
-                
-                // Optional: Rotate the mesh
-                mesh.rotation.y += deltaTime * 1.0;
             });
 
             // 10. Start the engine
