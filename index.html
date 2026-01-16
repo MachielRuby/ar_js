@@ -33,7 +33,13 @@
     </style>
 </head>
 <body>
-    <div id="ui">Point camera at Hiro marker</div>
+    <div id="ui">
+        <div>请将摄像头对准 Hiro 标识物</div>
+        <div style="margin-top: 10px; pointer-events: auto;">
+            <button id="btn-scale-up" style="font-size: 20px; padding: 5px 15px;">+</button>
+            <button id="btn-scale-down" style="font-size: 20px; padding: 5px 15px;">-</button>
+        </div>
+    </div>
     <div id="container"></div>
 
     <!-- Import F3D and setup AR -->
@@ -126,6 +132,22 @@
             const mesh = new F3D.Mesh(geometry, material);
             mesh.position.y = 0.5; // Sit on top of the marker
             markerRoot.add(mesh);
+
+            // Button controls for scaling
+            const btnScaleUp = document.getElementById('btn-scale-up');
+            const btnScaleDown = document.getElementById('btn-scale-down');
+            
+            if (btnScaleUp && btnScaleDown) {
+                btnScaleUp.addEventListener('click', () => {
+                    mesh.scale.multiplyScalar(1.1);
+                    console.log('Model scaled up:', mesh.scale);
+                });
+
+                btnScaleDown.addEventListener('click', () => {
+                    mesh.scale.multiplyScalar(0.9);
+                    console.log('Model scaled down:', mesh.scale);
+                });
+            }
 
             // Also add a light if needed (F3D might have default lights, but marker root needs to be lit if using standard material)
             // MeshNormalMaterial doesn't need light.
